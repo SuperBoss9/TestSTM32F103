@@ -293,6 +293,7 @@ void setup()
   Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
   Serial.println("Voltage: " + (String)(0.000805861*analogRead(Power_1_Voltage)*1.98)+":"+ (String)(0.000805861*analogRead(Power_2_Voltage)*1.98));
   Serial.println("Current: " + (String)(0.000805861*analogRead(Power_1_Current)*0.375*7.1048)+":"+ (String)(0.000805861*analogRead(Power_2_Current)*0.375*7.2134));
+  Serial.println("ADC: "+(String)analogRead(Temperature_channel_1)+":"+(String)analogRead(Temperature_channel_2));
     
   Serial.println("Short Circuit OFF");
   digitalWrite(Power_1_ShortCircuit, HIGH);
@@ -324,9 +325,10 @@ void setup()
   
   Serial.println("Set Voltage ###");
   //analogWrite(Power_1_SetVoltage, 2500);
-  //analogWrite(Power_1_SetVoltage, 2500);
+  analogWrite(Power_1_SetVoltage, 2500);
   //pwm_start(PA_4,1000,500);
-  analogWrite(Power_1_SetVoltage, 595);
+  //dac_write_value(PA_4,500,1);
+  //analogWrite(Power_1_SetVoltage, 595);
   analogWrite(Power_2_SetVoltage, 4095);
   delay(1000);
   Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
