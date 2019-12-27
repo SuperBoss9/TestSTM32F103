@@ -1,36 +1,247 @@
 #include <Arduino.h>
 #include <stm32f1xx_ll_adc.h>
 #include <Wire.h>
+#include <analog.h>
 
-#define LED_internal PC12 // KDS2 Controller Build In LED
+#define THERMISTORNOMINAL 10000
+#define TEMPERATURENOMINAL 25
+#define NUMSAMPLES 5
+#define BCOEFFICIENT 3988
+#define SERIESRESISTOR 10000
+
+
+#define LED_internal PB3 // KDS2 Controller Build In LED
 #define UART_RX PA10
 #define UART_TX PA9
 
 // PWM Settings - ШИМ нужно подавать на ON_A1, а разрешение на PWM_A1
-#define ON_A1 PC6
-#define ON_A2 PC7
-#define PWM_A1 PA15
-#define PWM_A2 PB3
 
-#define ON_B1 PC8
-#define ON_B2 PC9
-#define PWM_B1 PB10
-#define PWM_B2 PB11
-
-#define Zummer PC3
 #define VREFINT 1200
 #define ADC_RANGE 4096
+
+#define Temperature_channel_1 PA6
+#define Temperature_channel_2 PA7
+
+#define I2C_SCL PB8
+#define I2C_SDA PB9
+
+#define LED_channel_1_anode PB6  // +
+#define LED_channel_1_catode PB7 // -
+
+#define LED_channel_2_anode PB4  // +
+#define LED_channel_2_catode PB5 // -
+
+//Buttons
+#define Button_1 PC6
+#define Button_2 PB13
+
+#define Encoder_1_A PC8
+#define Encoder_1_B PC7
+
+#define Encoder_2_A PB15
+#define Encoder_2_B PB14
+
+// Power
+#define Power_1_ShortCircuit PC0
+#define Power_2_ShortCircuit PB10
+
+#define Power_1_PositivePolarity PC1
+#define Power_1_NegativePolarity PC2
+#define Power_2_PositivePolarity PB2
+#define Power_2_NegativePolarity PC5
+
+#define Power_1_SetVoltage PA4
+#define Power_2_SetVoltage PA5
+
+#define Power_1_ATAC PC4
+#define Power_2_ATAC PC3
+
+#define Power_1_Current PA2
+#define Power_2_Current PA3
+
+#define Power_1_Voltage PA1
+#define Power_2_Voltage PA0
+
+#define LightMeter_1 PB0
+#define LightMeter_2 PB1
+
 
 void ScanI2C();
 void I2CRead_Write();
 byte EEPROM_ReadByte(int dev, byte Address);
 
-TIM_TypeDef *Instance = TIM4; 
+TIM_TypeDef *Instance = TIM4;
 HardwareTimer *MyTim = new HardwareTimer(Instance);
 
 void Update_IT_callback(HardwareTimer *) // Internal blinker
 {
   digitalWrite(LED_internal, !digitalRead(LED_internal));
+}
+float thermistorRead(int iPin)
+{
+  int samples[NUMSAMPLES];
+  uint8_t i;
+  float average;
+
+  // take N samples in a row, with a slight delay
+  for (i = 0; i < NUMSAMPLES; i++)
+  {
+    samples[i] = analogRead(iPin);
+    delay(10);
+  }
+  average = 0;
+  for (i = 0; i < NUMSAMPLES; i++)
+  {
+    average += samples[i];
+  }
+  average /= NUMSAMPLES;
+  //Serial.println("Average analog reading: " + (String)average);
+
+  // convert the value to resistance
+  average = 4095 / average - 1; // Don't forget to use correct resolution
+  average = SERIESRESISTOR / average;
+
+  //Serial.println("Thermistor resistance " + (String)average);
+
+  float steinhart;
+  steinhart = average / THERMISTORNOMINAL;          // (R/Ro)
+  steinhart = log(steinhart);                       // ln(R/Ro)
+  steinhart /= BCOEFFICIENT;                        // 1/B * ln(R/Ro)
+  steinhart += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
+  steinhart = 1.0 / steinhart;                      // Invert
+  steinhart -= 273.15;                              // convert to C
+
+  //Serial.println("Temperature " + (String)steinhart + " *C");
+  return steinhart;
+}
+float voltageRead(int iPin)
+{
+  int samples[NUMSAMPLES];
+  uint8_t i;
+  float average;
+  // take N samples in a row, with a slight delay
+  for (i = 0; i < NUMSAMPLES; i++)
+  {
+    samples[i] = analogRead(iPin);
+    delay(10);
+  }
+  average = 0;
+  for (i = 0; i < NUMSAMPLES; i++)
+  {
+    average += samples[i];
+  }
+  average /= NUMSAMPLES;
+  Serial.println("Average analog reading: " + (String)average);
+
+  average = average * 4095 / 3300; // Don't forget to change the numbers
+
+  Serial.println("Measured voltage is: " + (String)average);
+
+  return average;
+}
+void buttons()
+{
+  pinMode(Button_1, INPUT);
+  bool bButton1Pressed = digitalRead(Button_1);
+  while (bButton1Pressed == digitalRead(Button_1))
+  {
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println("Button 1 pressed");
+  delay(1000);
+  pinMode(Button_2, INPUT);
+  bool bButton2Pressed = digitalRead(Button_2);
+  while (bButton2Pressed == digitalRead(Button_2))
+  {
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println("Button 2 pressed");
+  delay(1000);  
+}
+void encoders(){
+  pinMode(Encoder_1_A, INPUT);
+  pinMode(Encoder_1_B, INPUT);
+  bool bENC1APressed = digitalRead(Encoder_1_A);
+  bool bENC1BPressed = digitalRead(Encoder_1_B);
+  Serial.println("1-Enc A cond: " + (String)digitalRead(Encoder_1_A));
+  Serial.println("1-Enc B cond: " + (String)digitalRead(Encoder_1_B));
+  Serial.println("Rotate ENC 1");
+  while (bENC1APressed == digitalRead(Encoder_1_A))
+  {
+    delay(1);
+  }
+  Serial.println("Enc 1 A Pressed");
+  Serial.println("Rotate Enc 1 More");
+  while (bENC1BPressed == digitalRead(Encoder_1_B))
+  {
+    delay(1);
+  }
+  Serial.println("Enc 1 B Pressed");
+  // ---------------------
+  pinMode(Encoder_2_A, INPUT);
+  pinMode(Encoder_2_B, INPUT);
+  bool bENC2APressed = digitalRead(Encoder_2_A);
+  bool bENC2BPressed = digitalRead(Encoder_2_B);
+  Serial.println("2-Button A cond: " + (String)digitalRead(Encoder_2_A));
+  Serial.println("2-Button B cond: " + (String)digitalRead(Encoder_2_B));
+  Serial.println("Rotate ENC 2");
+  while (bENC2APressed == digitalRead(Encoder_2_A))
+  {
+    delay(1);
+  }
+  Serial.println("Enc 2 A Pressed");
+  Serial.println("Rotate Enc 2 More");
+  while (bENC2BPressed == digitalRead(Encoder_2_B))
+  {
+    delay(1);
+  }
+  Serial.println("Enc 2 B Pressed");
+}
+void LEDs(){
+  // External LEDs
+  // Ch #1
+  pinMode(LED_channel_1_anode, OUTPUT);
+  pinMode(LED_channel_1_catode, OUTPUT);
+  digitalWrite(LED_channel_1_anode, LOW);
+  digitalWrite(LED_channel_1_catode, LOW);
+  Serial.println("Ch #1 LED OFF");
+  HAL_Delay(1000);
+  digitalWrite(LED_channel_1_anode, LOW);
+  digitalWrite(LED_channel_1_catode, HIGH);
+  Serial.println("Ch #1 LED RED");
+  HAL_Delay(1000);
+  digitalWrite(LED_channel_1_catode, LOW);
+  digitalWrite(LED_channel_1_anode, HIGH);
+  Serial.println("Ch #1 LED Green");
+  HAL_Delay(1000);
+  digitalWrite(LED_channel_1_catode, LOW);
+  digitalWrite(LED_channel_1_anode, LOW);
+
+  // Ch #2
+  pinMode(LED_channel_2_anode, OUTPUT);
+  pinMode(LED_channel_2_catode, OUTPUT);
+  digitalWrite(LED_channel_2_anode, LOW);
+  digitalWrite(LED_channel_2_catode, LOW);
+  Serial.println("Ch #2 LED OFF");
+  HAL_Delay(1000);
+  digitalWrite(LED_channel_2_anode, LOW);
+  digitalWrite(LED_channel_2_catode, HIGH);
+  Serial.println("Ch #2 LED RED");
+  HAL_Delay(1000);
+  digitalWrite(LED_channel_2_catode, LOW);
+  digitalWrite(LED_channel_2_anode, HIGH);
+  Serial.println("Ch #2 LED Green");
+  HAL_Delay(1000);
+  digitalWrite(LED_channel_2_catode, LOW);
+  digitalWrite(LED_channel_2_anode, LOW);
+}
+void LightMeters(){
+  // Light Meters
+  pinMode(LightMeter_1,INPUT);
+  pinMode(LightMeter_2,INPUT);
+  Serial.println("Light meters "+(String)analogRead(LightMeter_1)+":"+(String)analogRead(LightMeter_2));
 }
 void setup()
 {
@@ -39,77 +250,118 @@ void setup()
   Serial.setTx(UART_TX);
   Serial.begin(115200);
 
-  pinMode(LED_internal, OUTPUT);           // Build-in LED
-  MyTim->setMode(4, TIMER_OUTPUT_COMPARE); 
-  MyTim->setOverflow(1, HERTZ_FORMAT);     // 1 Hz
+  pinMode(LED_internal, OUTPUT); // Build-in LED
+  MyTim->setMode(4, TIMER_OUTPUT_COMPARE);
+  MyTim->setOverflow(1, HERTZ_FORMAT); // 1 Hz
   MyTim->attachInterrupt(Update_IT_callback);
   MyTim->resume();
 
   // Init Read& Write
   analogWriteResolution(12);
   analogWriteFrequency(10000);
-  analogReadResolution(10); // 0-1023
-  
-  // Set up PWM pins
-  pinMode(ON_A1, OUTPUT);
-  pinMode(ON_A2, OUTPUT);
-  pinMode(PWM_A1, OUTPUT);
-  pinMode(PWM_A2, OUTPUT);
+  analogReadResolution(12); // 0-4095
 
-  pinMode(ON_B1, OUTPUT);
-  pinMode(ON_B2, OUTPUT);
-  pinMode(PWM_B1, OUTPUT);
-  pinMode(PWM_B2, OUTPUT);
-  
-  Serial.println("\n\rHello the new day!");
-
-  // PWM HardCore
-  Serial.println("Drop voltage to Zero at A & B");
-  digitalWrite(ON_A1, LOW);
-  digitalWrite(ON_A2, LOW);
-  digitalWrite(PWM_A1, LOW);
-  digitalWrite(PWM_A2, LOW);
-  delay(10000);
-  
-  int iPWM=0;
-  Serial.println("A-Step 100");
-  digitalWrite(PWM_A1,HIGH);
-  while(iPWM<4096){
-    analogWrite(ON_A1,iPWM);
-    Serial.println("  "+(String)iPWM);
-    delay(1500);
-    iPWM+=100;
-  }
-  Serial.println("Back to 0");
-  digitalWrite(PWM_A1,LOW);
-  analogWrite(ON_A1,0);
-
-  Serial.println("B-Step 100");
-  iPWM=0;
-  digitalWrite(PWM_B2,HIGH);
-  while(iPWM<4096){
-    analogWrite(ON_B2,iPWM);
-    Serial.println("  "+(String)iPWM);
-    delay(1500);
-    iPWM+=100;
-  }
-  Serial.println("Back to 0");
-  digitalWrite(PWM_B1,LOW);
-  analogWrite(ON_B1,0);  
-  //End of PWM
+  Serial.println("\r\nShow must go on!\r\n");
 
   // I2C EEPROM
-  ScanI2C();
-  I2CRead_Write();
+      //ScanI2C(); // Какая-то пробелма с инициализацией, если ставить в конец, то не инициализируется Wire по всей видимости
+      //I2CRead_Write();
   // End I2C
-  tone(Zummer, 400, 10);
+  pinMode(Temperature_channel_1,INPUT_ANALOG);
+  pinMode(Temperature_channel_2,INPUT_ANALOG);
+  Serial.println("Temp: "+(String)analogRead(Temperature_channel_1)+":"+(String)analogRead(Temperature_channel_2));
+  //POWER
+    // Init
+  pinMode(Power_1_ShortCircuit, OUTPUT);
+  pinMode(Power_2_ShortCircuit, OUTPUT);
+  pinMode(Power_1_PositivePolarity,OUTPUT);
+  pinMode(Power_1_NegativePolarity,OUTPUT);
+  pinMode(Power_2_PositivePolarity,OUTPUT);
+  pinMode(Power_2_NegativePolarity,OUTPUT);
+  pinMode(Power_1_SetVoltage,OUTPUT);
+  pinMode(Power_2_SetVoltage,OUTPUT);
+  pinMode(Power_1_ATAC,INPUT);
+  pinMode(Power_2_ATAC,INPUT);
+  pinMode(Power_1_Current,INPUT);
+  pinMode(Power_2_Current,INPUT);  
+
+      // ShortCircuit ON
+  Serial.println("Short Circuit ON");
+  digitalWrite(Power_1_ShortCircuit, LOW);
+  digitalWrite(Power_2_ShortCircuit, LOW);
+  delay(1000);
+  Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
+  Serial.println("Voltage: " + (String)(0.000805861*analogRead(Power_1_Voltage)*1.98)+":"+ (String)(0.000805861*analogRead(Power_2_Voltage)*1.98));
+  Serial.println("Current: " + (String)(0.000805861*analogRead(Power_1_Current)*0.375*7.1048)+":"+ (String)(0.000805861*analogRead(Power_2_Current)*0.375*7.2134));
+    
+  Serial.println("Short Circuit OFF");
+  digitalWrite(Power_1_ShortCircuit, HIGH);
+  digitalWrite(Power_2_ShortCircuit, HIGH);
+  delay(1000);
+  Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
+  Serial.println("Voltage: " + (String)(0.000805861*analogRead(Power_1_Voltage)*1.98)+":"+ (String)(0.000805861*analogRead(Power_2_Voltage)*1.98));
+  Serial.println("Current: " + (String)(0.000805861*analogRead(Power_1_Current)*0.375*7.1048)+":"+ (String)(0.000805861*analogRead(Power_2_Current)*0.375*7.2134)+"\r\n");
+  
+  Serial.println("Positive polarity ON");
+  digitalWrite(Power_1_PositivePolarity, HIGH);
+  digitalWrite(Power_1_NegativePolarity, LOW);
+  digitalWrite(Power_2_PositivePolarity, HIGH);
+  digitalWrite(Power_2_NegativePolarity, LOW);
+  delay(1000);
+  Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
+  Serial.println("Voltage: " + (String)(0.000805861*analogRead(Power_1_Voltage)*1.98)+":"+ (String)(0.000805861*analogRead(Power_2_Voltage)*1.98));
+  Serial.println("Current: " + (String)(0.000805861*analogRead(Power_1_Current)*0.375*7.1048)+":"+ (String)(0.000805861*analogRead(Power_2_Current)*0.375*7.2134)+"\r\n");
+  
+  Serial.println("Negative polarity ON");
+  digitalWrite(Power_1_PositivePolarity, LOW);
+  digitalWrite(Power_1_NegativePolarity, HIGH);
+  digitalWrite(Power_2_PositivePolarity, LOW);
+  digitalWrite(Power_2_NegativePolarity, HIGH);
+  delay(1000);
+  Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
+  Serial.println("Voltage: " + (String)(0.000805861*analogRead(Power_1_Voltage)*1.98)+":"+ (String)(0.000805861*analogRead(Power_2_Voltage)*1.98));
+  Serial.println("Current: " + (String)(0.000805861*analogRead(Power_1_Current)*0.375*7.1048)+":"+ (String)(0.000805861*analogRead(Power_2_Current)*0.375*7.2134)+"\r\n");
+  
+  Serial.println("Set Voltage ###");
+  //analogWrite(Power_1_SetVoltage, 2500);
+  //analogWrite(Power_1_SetVoltage, 2500);
+  //pwm_start(PA_4,1000,500);
+  analogWrite(Power_1_SetVoltage, 595);
+  analogWrite(Power_2_SetVoltage, 4095);
+  delay(1000);
+  Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
+  Serial.println("Voltage: " + (String)(0.000805861*analogRead(Power_1_Voltage)*1.98)+":"+ (String)(0.000805861*analogRead(Power_2_Voltage)*1.98));
+  Serial.println("Current: " + (String)(0.000805861*analogRead(Power_1_Current)*0.375*7.1048)+":"+ (String)(0.000805861*analogRead(Power_2_Current)*0.375*7.2134)+"\r\n");
+  
+  analogWrite(Power_1_SetVoltage, 0);
+  analogWrite(Power_2_SetVoltage, 0);
+  Serial.println("Set Voltage 0");
+  delay(1000);
+  Serial.println("ATAC: "+(String)digitalRead(Power_1_ATAC)+":"+(String)digitalRead(Power_2_ATAC));
+  Serial.println("Voltage: " + (String)(0.000805861*analogRead(Power_1_Voltage)*1.98)+":"+ (String)(0.000805861*analogRead(Power_2_Voltage)*1.98));
+  Serial.println("Current: " + (String)(0.000805861*analogRead(Power_1_Current)*0.375*7.1048)+":"+ (String)(0.000805861*analogRead(Power_2_Current)*0.375*7.2134)+"\r\n");
+    
+
+  
+        //buttons(); // Check Buttons
+        //encoders(); // Check Encoders
+        //LEDs();
+        //LightMeters();
+
+  
+
+  Serial.println("\n\rEverything done");
+
+  
+  
+  /*tone(Zummer, 400, 10);*/
 }
 
 void loop()
 {
   // put your main code here, to run repeatedly:
   delay(1000);
-  Serial.print(".");
+  //Serial.print(".");
 }
 void I2CRead_Write()
 {
@@ -167,8 +419,10 @@ void ScanI2C()
   byte error, address;
   int nDevices;
   // I2C
-  Wire.setSCL(PB6);
-  Wire.setSDA(PB7);
+  Wire.setSCL(I2C_SCL);
+  Wire.setSDA(I2C_SDA);
+  //Wire.setSCL(62);
+  //Wire.setSDA(61);
   Wire.begin();
 
   Serial.println("Scanning...");
